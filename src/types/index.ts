@@ -56,3 +56,11 @@ export interface CrossTabResult {
   totalCount: number
   aggregation: AggregationResult | null
 }
+
+/** ユーザーが画面上で組むクロス集計パターン1件 */
+export interface CrossTabPattern {
+  id: string
+  name: string
+  filters: Array<CrossTabFilter & { id: string }>
+  targetColumn: string
+}

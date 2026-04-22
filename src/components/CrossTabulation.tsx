@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type {
   ColumnConfig,
   CrossTabConfig,
   CrossTabFilter,
+  CrossTabPattern,
   CrossTabResult,
   ParsedCSV,
 } from '../types'
@@ -13,29 +14,43 @@ import {
   runCrossTabulation,
   validateCrossTabConfig,
 } from '../lib/crossTabulator'
-import { exportCrossTabulation } from '../lib/excelExporter'
 import { AggregationBody } from './SimpleAggregation'
 
 interface CrossTabulationProps {
   csv: ParsedCSV
   configs: ColumnConfig[]
+  patterns: CrossTabPattern[]
+  onPatternsChange: (patterns: CrossTabPattern[]) => void
 }
 
-interface FilterRowState extends CrossTabFilter {
-  id: string
+function newId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-function newFilterId(): string {
-  return `f_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+function createPattern(existingPatterns: CrossTabPattern[]): CrossTabPattern {
+  // 既存の「クロス集計N」から最大Nを拾って+1を付ける（削除後も重複しないように）
+  let maxNum = 0
+  for (const p of existingPatterns) {
+    const m = p.name.match(/^クロス集計(\d+)$/)
+    if (m) {
+      const n = Number(m[1])
+      if (n > maxNum) maxNum = n
+    }
+  }
+  return {
+    id: newId('p'),
+    name: `クロス集計${maxNum + 1}`,
+    filters: [],
+    targetColumn: '',
+  }
 }
 
-export function CrossTabulation({ csv, configs }: CrossTabulationProps) {
-  const [filters, setFilters] = useState<FilterRowState[]>([])
-  const [targetColumn, setTargetColumn] = useState<string>('')
-  const [result, setResult] = useState<CrossTabResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [exporting, setExporting] = useState(false)
-
+export function CrossTabulation({
+  csv,
+  configs,
+  patterns,
+  onPatternsChange,
+}: CrossTabulationProps) {
   const filterableColumns = useMemo(
     () => getFilterableColumns(configs),
     [configs]
@@ -45,86 +60,150 @@ export function CrossTabulation({ csv, configs }: CrossTabulationProps) {
     [configs]
   )
 
-  const invalidateResult = () => {
-    setResult(null)
-    setError(null)
+  const addPattern = () => {
+    onPatternsChange([...patterns, createPattern(patterns)])
   }
 
+  const updatePattern = (id: string, patch: Partial<CrossTabPattern>) => {
+    onPatternsChange(
+      patterns.map((p) => (p.id === id ? { ...p, ...patch } : p))
+    )
+  }
+
+  const removePattern = (id: string) => {
+    onPatternsChange(patterns.filter((p) => p.id !== id))
+  }
+
+  return (
+    <div className="space-y-5">
+      {patterns.length === 0 && (
+        <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
+          クロス集計のパターンがまだありません
+        </div>
+      )}
+
+      {patterns.map((pattern, i) => (
+        <PatternCard
+          key={pattern.id}
+          pattern={pattern}
+          defaultName={`クロス集計${i + 1}`}
+          csv={csv}
+          configs={configs}
+          filterableColumns={filterableColumns}
+          aggregatableColumns={aggregatableColumns}
+          onChange={(patch) => updatePattern(pattern.id, patch)}
+          onRemove={() => removePattern(pattern.id)}
+        />
+      ))}
+
+      <div>
+        <button
+          onClick={addPattern}
+          className="px-4 py-2 border border-dashed border-blue-400 text-blue-600 rounded hover:bg-blue-50 text-sm"
+        >
+          ＋ パターンを追加
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PatternCard({
+  pattern,
+  defaultName,
+  csv,
+  configs,
+  filterableColumns,
+  aggregatableColumns,
+  onChange,
+  onRemove,
+}: {
+  pattern: CrossTabPattern
+  defaultName: string
+  csv: ParsedCSV
+  configs: ColumnConfig[]
+  filterableColumns: ColumnConfig[]
+  aggregatableColumns: ColumnConfig[]
+  onChange: (patch: Partial<CrossTabPattern>) => void
+  onRemove: () => void
+}) {
+  // 実行結果をその場で算出（stateで持たずに派生）
+  const { result, error } = useMemo(() => {
+    const config: CrossTabConfig = {
+      filters: pattern.filters.map(({ columnName, value }) => ({
+        columnName,
+        value,
+      })),
+      targetColumn: pattern.targetColumn,
+    }
+    const validationError = validateCrossTabConfig(config)
+    if (validationError) {
+      return { result: null as CrossTabResult | null, error: validationError }
+    }
+    return {
+      result: runCrossTabulation(csv, configs, config),
+      error: null as string | null,
+    }
+  }, [csv, configs, pattern.filters, pattern.targetColumn])
+
   const addFilter = () => {
-    invalidateResult()
-    setFilters((prev) => [
-      ...prev,
-      { id: newFilterId(), columnName: '', value: '' },
-    ])
+    onChange({
+      filters: [
+        ...pattern.filters,
+        { id: newId('f'), columnName: '', value: '' },
+      ],
+    })
   }
 
   const updateFilter = (id: string, patch: Partial<CrossTabFilter>) => {
-    invalidateResult()
-    setFilters((prev) =>
-      prev.map((f) => {
+    onChange({
+      filters: pattern.filters.map((f) => {
         if (f.id !== id) return f
         const merged = { ...f, ...patch }
         if (patch.columnName !== undefined && patch.columnName !== f.columnName) {
           merged.value = ''
         }
         return merged
-      })
-    )
+      }),
+    })
   }
 
   const removeFilter = (id: string) => {
-    invalidateResult()
-    setFilters((prev) => prev.filter((f) => f.id !== id))
-  }
-
-  const onTargetChange = (value: string) => {
-    invalidateResult()
-    setTargetColumn(value)
-  }
-
-  const onRunCrossTab = () => {
-    setError(null)
-    const config: CrossTabConfig = {
-      filters: filters.map(({ columnName, value }) => ({ columnName, value })),
-      targetColumn,
-    }
-    const validationError = validateCrossTabConfig(config)
-    if (validationError) {
-      setError(validationError)
-      setResult(null)
-      return
-    }
-    const r = runCrossTabulation(csv, configs, config)
-    setResult(r)
-  }
-
-  const onExport = async () => {
-    if (!result) return
-    setError(null)
-    setExporting(true)
-    try {
-      await exportCrossTabulation(result)
-    } catch (e) {
-      console.error(e)
-      setError('集計中にエラーが発生しました。ページを再読み込みしてお試しください')
-    } finally {
-      setExporting(false)
-    }
+    onChange({
+      filters: pattern.filters.filter((f) => f.id !== id),
+    })
   }
 
   return (
-    <div className="space-y-5">
-      <section className="bg-white rounded-lg shadow p-5">
-        <h3 className="font-semibold mb-3">フィルタ条件（AND結合）</h3>
+    <section className="bg-white rounded-lg shadow p-5">
+      <div className="flex items-start gap-3 mb-4">
+        <input
+          type="text"
+          value={pattern.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder={defaultName}
+          className="font-semibold border rounded px-2 py-1 text-base flex-1"
+        />
+        <button
+          onClick={onRemove}
+          className="text-red-500 hover:text-red-700 text-sm px-2 py-1"
+          aria-label="パターンを削除"
+        >
+          削除
+        </button>
+      </div>
 
-        {filters.length === 0 && (
-          <p className="text-sm text-gray-500 mb-3">
-            条件が設定されていません。「＋ 条件を追加」から追加してください
+      <div className="mb-4">
+        <h4 className="text-sm font-medium text-gray-700 mb-2">
+          フィルタ条件（AND結合）
+        </h4>
+        {pattern.filters.length === 0 && (
+          <p className="text-sm text-gray-500 mb-2">
+            条件を追加してください
           </p>
         )}
-
         <div className="space-y-2">
-          {filters.map((f, i) => (
+          {pattern.filters.map((f, i) => (
             <FilterRow
               key={f.id}
               filter={f}
@@ -137,20 +216,21 @@ export function CrossTabulation({ csv, configs }: CrossTabulationProps) {
             />
           ))}
         </div>
-
         <button
           onClick={addFilter}
-          className="mt-3 text-sm text-blue-600 hover:underline"
+          className="mt-2 text-sm text-blue-600 hover:underline"
         >
           ＋ 条件を追加
         </button>
-      </section>
+      </div>
 
-      <section className="bg-white rounded-lg shadow p-5">
-        <h3 className="font-semibold mb-3">集計対象設問</h3>
+      <div className="mb-4">
+        <h4 className="text-sm font-medium text-gray-700 mb-2">
+          集計対象設問
+        </h4>
         <select
-          value={targetColumn}
-          onChange={(e) => onTargetChange(e.target.value)}
+          value={pattern.targetColumn}
+          onChange={(e) => onChange({ targetColumn: e.target.value })}
           className="border rounded px-3 py-2 bg-white text-sm w-full max-w-lg"
         >
           <option value="">-- 設問を選択 --</option>
@@ -160,34 +240,16 @@ export function CrossTabulation({ csv, configs }: CrossTabulationProps) {
             </option>
           ))}
         </select>
-      </section>
-
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onRunCrossTab}
-          className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
-          集計実行
-        </button>
-        {result && (
-          <button
-            onClick={onExport}
-            disabled={exporting}
-            className="px-5 py-2 border border-blue-600 text-blue-600 rounded hover:bg-blue-50 disabled:opacity-50"
-          >
-            {exporting ? '出力中...' : 'Excel出力'}
-          </button>
-        )}
       </div>
 
-      {error && (
-        <div className="p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm">
-          {error}
-        </div>
-      )}
-
-      {result && <CrossTabResultCard result={result} />}
-    </div>
+      <div className="border-t pt-4 mt-4">
+        <h4 className="text-sm font-medium text-gray-700 mb-2">結果</h4>
+        {error && (
+          <p className="text-sm text-gray-500 italic">{error}</p>
+        )}
+        {!error && result && <ResultView result={result} />}
+      </div>
+    </section>
   )
 }
 
@@ -253,24 +315,18 @@ function FilterRow({
   )
 }
 
-function CrossTabResultCard({ result }: { result: CrossTabResult }) {
+function ResultView({ result }: { result: CrossTabResult }) {
   return (
-    <section className="bg-white rounded-lg shadow p-5">
-      <h3 className="font-semibold mb-3">結果</h3>
-      <p className="text-sm text-gray-700 mb-4">
+    <div>
+      <p className="text-sm text-gray-700 mb-3">
         該当者: <strong>{result.matchedCount}人</strong> / 全
         {result.totalCount}人中
       </p>
       {result.matchedCount === 0 || !result.aggregation ? (
-        <p className="text-gray-500 italic">該当者なし</p>
+        <p className="text-gray-500 italic text-sm">該当者なし</p>
       ) : (
-        <div>
-          <p className="text-sm text-gray-600 mb-2">
-            集計対象: <strong>{result.aggregation.columnName}</strong>
-          </p>
-          <AggregationBody result={result.aggregation} />
-        </div>
+        <AggregationBody result={result.aggregation} />
       )}
-    </section>
+    </div>
   )
 }

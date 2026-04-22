@@ -1,7 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { AggregationResult, ColumnConfig, ParsedCSV } from '../types'
 import { aggregateAll } from '../lib/aggregator'
-import { exportSimpleAggregation } from '../lib/excelExporter'
 
 interface SimpleAggregationProps {
   csv: ParsedCSV
@@ -10,43 +9,12 @@ interface SimpleAggregationProps {
 
 export function SimpleAggregation({ csv, configs }: SimpleAggregationProps) {
   const results = useMemo(() => aggregateAll(csv, configs), [csv, configs])
-  const [exporting, setExporting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const onExport = async () => {
-    setError(null)
-    setExporting(true)
-    try {
-      await exportSimpleAggregation(results)
-    } catch (e) {
-      console.error(e)
-      setError('集計中にエラーが発生しました。ページを再読み込みしてお試しください')
-    } finally {
-      setExporting(false)
-    }
-  }
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-gray-600">
-          {results.length}項目の集計結果（対象列のみ）
-        </p>
-        <button
-          onClick={onExport}
-          disabled={exporting || results.length === 0}
-          className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-        >
-          {exporting ? '出力中...' : 'Excel出力'}
-        </button>
-      </div>
-
-      {error && (
-        <div className="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm">
-          {error}
-        </div>
-      )}
-
+      <p className="text-sm text-gray-600 mb-4">
+        {results.length}項目の集計結果（対象列のみ）
+      </p>
       <div className="space-y-6">
         {results.map((r, i) => (
           <AggregationCard key={i} result={r} />

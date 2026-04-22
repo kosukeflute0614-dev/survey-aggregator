@@ -6,49 +6,35 @@ import type {
 } from '../types'
 
 /**
- * 単純集計のExcelをダウンロードさせる
+ * 全集計を1ファイルにまとめて出力
+ * シート構成:
+ *   1. 単純集計
+ *   2. クロス集計（全パターンを縦に並べる）
+ *   3. 自由記述_Q○ (各設問ごと)
  */
-export async function exportSimpleAggregation(
-  results: AggregationResult[]
+export async function exportCombinedAggregation(
+  simpleResults: AggregationResult[],
+  crossResults: Array<{ patternName: string; result: CrossTabResult }>
 ): Promise<void> {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = 'Survey Aggregator'
   workbook.created = new Date()
 
-  buildSummarySheet(workbook, results)
-  buildFreeTextSheets(workbook, results)
+  buildSimpleSheet(workbook, simpleResults)
+  buildCrossTabSheet(workbook, crossResults)
+  buildFreeTextSheets(workbook, simpleResults)
 
   const buffer = await workbook.xlsx.writeBuffer()
-  triggerDownload(buffer, `単純集計_${todayStamp()}.xlsx`)
+  triggerDownload(buffer, `集計結果_${timestampStamp()}.xlsx`)
 }
 
-/**
- * クロス集計のExcelをダウンロードさせる
- */
-export async function exportCrossTabulation(
-  result: CrossTabResult
-): Promise<void> {
-  const workbook = new ExcelJS.Workbook()
-  workbook.creator = 'Survey Aggregator'
-  workbook.created = new Date()
-
-  buildCrossTabSheet(workbook, result)
-
-  const buffer = await workbook.xlsx.writeBuffer()
-  triggerDownload(buffer, `クロス集計_${timestampStamp()}.xlsx`)
-}
-
-function buildSummarySheet(
+function buildSimpleSheet(
   workbook: ExcelJS.Workbook,
   results: AggregationResult[]
 ) {
-  const sheet = workbook.addWorksheet('集計結果')
+  const sheet = workbook.addWorksheet('単純集計')
 
-  sheet.columns = [
-    { width: 50 },
-    { width: 12 },
-    { width: 10 },
-  ]
+  sheet.columns = [{ width: 50 }, { width: 12 }, { width: 10 }]
 
   const headerRow = sheet.addRow(['設問 / 選択肢', '件数', '割合'])
   headerRow.font = { bold: true }
@@ -58,6 +44,58 @@ function buildSummarySheet(
     sheet.addRow([])
     writeAggregationBlock(sheet, r)
   }
+
+  if (results.every((r) => r.type === 'excluded')) {
+    sheet.addRow([])
+    sheet.addRow(['（集計対象の列がありません）'])
+  }
+}
+
+function buildCrossTabSheet(
+  workbook: ExcelJS.Workbook,
+  crossResults: Array<{ patternName: string; result: CrossTabResult }>
+) {
+  const sheet = workbook.addWorksheet('クロス集計')
+  sheet.columns = [{ width: 50 }, { width: 12 }, { width: 10 }]
+
+  const headerRow = sheet.addRow(['クロス集計（全パターン）'])
+  headerRow.font = { bold: true, size: 14 }
+
+  if (crossResults.length === 0) {
+    sheet.addRow([])
+    sheet.addRow(['（クロス集計のパターンが設定されていません）'])
+    return
+  }
+
+  for (const { patternName, result } of crossResults) {
+    sheet.addRow([])
+    const title = sheet.addRow([patternName])
+    title.font = { bold: true, size: 12 }
+
+    const filtersTitle = sheet.addRow(['【フィルタ条件（AND結合）】'])
+    filtersTitle.font = { bold: true }
+    if (result.filters.length === 0) {
+      sheet.addRow(['（条件なし）'])
+    } else {
+      for (const f of result.filters) {
+        sheet.addRow([formatFilter(f)])
+      }
+    }
+
+    const matchedTitle = sheet.addRow(['【該当者】'])
+    matchedTitle.font = { bold: true }
+    sheet.addRow([`${result.matchedCount}人 / 全${result.totalCount}人中`])
+
+    if (result.matchedCount === 0 || result.aggregation === null) {
+      const noResult = sheet.addRow(['該当者なし — 集計できませんでした'])
+      noResult.font = { italic: true, color: { argb: 'FF888888' } }
+      continue
+    }
+
+    const aggTitle = sheet.addRow([`【集計: ${result.aggregation.columnName}】`])
+    aggTitle.font = { bold: true }
+    writeAggregationBlock(sheet, result.aggregation)
+  }
 }
 
 function writeAggregationBlock(
@@ -66,9 +104,7 @@ function writeAggregationBlock(
 ) {
   const titleRow = sheet.addRow([`Q: ${r.columnName}`])
   titleRow.font = { bold: true }
-  sheet.mergeCells(
-    `A${titleRow.number}:C${titleRow.number}`
-  )
+  sheet.mergeCells(`A${titleRow.number}:C${titleRow.number}`)
 
   switch (r.type) {
     case 'single': {
@@ -129,44 +165,6 @@ function buildFreeTextSheets(
   }
 }
 
-function buildCrossTabSheet(
-  workbook: ExcelJS.Workbook,
-  result: CrossTabResult
-) {
-  const sheet = workbook.addWorksheet('クロス集計結果')
-  sheet.columns = [{ width: 50 }, { width: 12 }, { width: 10 }]
-
-  const titleRow = sheet.addRow(['クロス集計結果'])
-  titleRow.font = { bold: true, size: 14 }
-
-  sheet.addRow([])
-  const filtersTitle = sheet.addRow(['【フィルタ条件（AND結合）】'])
-  filtersTitle.font = { bold: true }
-  if (result.filters.length === 0) {
-    sheet.addRow(['（条件なし）'])
-  } else {
-    for (const f of result.filters) {
-      sheet.addRow([formatFilter(f)])
-    }
-  }
-
-  sheet.addRow([])
-  const matchedTitle = sheet.addRow(['【該当者】'])
-  matchedTitle.font = { bold: true }
-  sheet.addRow([`${result.matchedCount}人 / 全${result.totalCount}人中`])
-
-  sheet.addRow([])
-  if (result.matchedCount === 0 || result.aggregation === null) {
-    const noResult = sheet.addRow(['該当者なし — 集計できませんでした'])
-    noResult.font = { italic: true, color: { argb: 'FF888888' } }
-    return
-  }
-
-  const aggTitle = sheet.addRow([`【集計: ${result.aggregation.columnName}】`])
-  aggTitle.font = { bold: true }
-  writeAggregationBlock(sheet, result.aggregation)
-}
-
 function formatFilter(f: CrossTabFilter): string {
   return `${f.columnName} = ${f.value}`
 }
@@ -177,14 +175,6 @@ function formatPercentage(p: number): string {
 
 function roundNum(n: number): number {
   return Math.round(n * 100) / 100
-}
-
-function todayStamp(): string {
-  const d = new Date()
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}`
 }
 
 function timestampStamp(): string {
@@ -214,10 +204,7 @@ function uniqueSheetName(workbook: ExcelJS.Workbook, base: string): string {
   return `${base}_${i}`
 }
 
-function triggerDownload(
-  buffer: ExcelJS.Buffer,
-  filename: string
-) {
+function triggerDownload(buffer: ExcelJS.Buffer, filename: string) {
   const blob = new Blob([buffer as ArrayBuffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
@@ -228,6 +215,5 @@ function triggerDownload(
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  // ダウンロード開始を待ってからURLを解放（Safari等でのタイミング問題回避）
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
