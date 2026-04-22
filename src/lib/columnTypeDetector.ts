@@ -2,8 +2,12 @@ import type { ColumnConfig, ColumnType, ParsedCSV } from '../types'
 
 // 判定用の調整可能な定数
 export const DETECTOR_THRESHOLDS = {
-  /** 複数選択と判定するための「カンマ+スペース」を含む行の割合 */
-  MULTIPLE_CHOICE_RATIO: 0.2,
+  /**
+   * 複数選択と判定するための「カンマ+スペース」を含む行の割合
+   * 実データでは「複数選んだ人」の割合は少ないことがあるため、10%で検出する。
+   * 誤判定を感じたら列設定画面で手動切替可能
+   */
+  MULTIPLE_CHOICE_RATIO: 0.1,
   /** 単一選択と判定するためのユニーク値の最大個数 */
   SINGLE_CHOICE_UNIQUE_MAX: 5,
   /** 複数選択の区切り文字 */

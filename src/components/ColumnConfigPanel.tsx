@@ -76,6 +76,10 @@ export function ColumnConfigPanel({
         </button>
       </div>
 
+      <div className="mb-4 p-3 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800">
+        列タイプは自動判定されますが、<strong>複数選択（カンマ区切り）の列が「自由記述」になっている場合</strong>は、列タイプのドロップダウンで「複数選択」に手動切替してください。
+      </div>
+
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-gray-700">
