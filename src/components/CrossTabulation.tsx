@@ -45,7 +45,13 @@ export function CrossTabulation({ csv, configs }: CrossTabulationProps) {
     [configs]
   )
 
+  const invalidateResult = () => {
+    setResult(null)
+    setError(null)
+  }
+
   const addFilter = () => {
+    invalidateResult()
     setFilters((prev) => [
       ...prev,
       { id: newFilterId(), columnName: '', value: '' },
@@ -53,6 +59,7 @@ export function CrossTabulation({ csv, configs }: CrossTabulationProps) {
   }
 
   const updateFilter = (id: string, patch: Partial<CrossTabFilter>) => {
+    invalidateResult()
     setFilters((prev) =>
       prev.map((f) => {
         if (f.id !== id) return f
@@ -66,7 +73,13 @@ export function CrossTabulation({ csv, configs }: CrossTabulationProps) {
   }
 
   const removeFilter = (id: string) => {
+    invalidateResult()
     setFilters((prev) => prev.filter((f) => f.id !== id))
+  }
+
+  const onTargetChange = (value: string) => {
+    invalidateResult()
+    setTargetColumn(value)
   }
 
   const onRunCrossTab = () => {
@@ -137,7 +150,7 @@ export function CrossTabulation({ csv, configs }: CrossTabulationProps) {
         <h3 className="font-semibold mb-3">集計対象設問</h3>
         <select
           value={targetColumn}
-          onChange={(e) => setTargetColumn(e.target.value)}
+          onChange={(e) => onTargetChange(e.target.value)}
           className="border rounded px-3 py-2 bg-white text-sm w-full max-w-lg"
         >
           <option value="">-- 設問を選択 --</option>
